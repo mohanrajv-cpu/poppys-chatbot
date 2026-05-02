@@ -154,6 +154,47 @@ export default function Sidebar({
         ))}
       </div>
 
+      {/* Admin Links */}
+      <div className="px-3 mb-2 space-y-1">
+        <button
+          onClick={() => router.push('/admin/notifications')}
+          className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-white/10 transition-colors flex items-center gap-2 ${
+            pathname === '/admin/notifications' ? 'bg-white/15' : ''
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+          Notifications
+        </button>
+        {user.role === 'colour_manager' && (
+          <button
+            onClick={() => router.push('/admin/colours')}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-white/10 transition-colors flex items-center gap-2 ${
+              pathname === '/admin/colours' ? 'bg-white/15' : ''
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+            </svg>
+            Colour Bank
+          </button>
+        )}
+        {user.role === 'po_approver' && (
+          <button
+            onClick={() => router.push('/admin/approvals')}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-white/10 transition-colors flex items-center gap-2 ${
+              pathname === '/admin/approvals' ? 'bg-white/15' : ''
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            PO Approvals
+          </button>
+        )}
+      </div>
+
       {/* User + Logout */}
       <div className="p-3 border-t border-white/10">
         <div className="flex items-center justify-between">

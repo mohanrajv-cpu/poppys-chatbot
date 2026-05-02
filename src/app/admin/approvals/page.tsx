@@ -7,6 +7,7 @@ export default function POApprovalPage() {
   const [pos, setPOs] = useState<PO[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectModal, setRejectModal] = useState<{ id: number; reason: string } | null>(null);
+  const [approvedPdf, setApprovedPdf] = useState<{ poNumber: string; url: string } | null>(null);
 
   useEffect(() => {
     fetchPOs();
@@ -33,7 +34,11 @@ export default function POApprovalPage() {
       body: JSON.stringify({ action: 'approve' }),
     });
     if (res.ok) {
+      const data = await res.json();
       setPOs((prev) => prev.filter((p) => p.id !== id));
+      if (data.po?.pdf_url) {
+        setApprovedPdf({ poNumber: data.po.po_number, url: data.po.pdf_url });
+      }
     }
   }
 
@@ -65,6 +70,32 @@ export default function POApprovalPage() {
           Review and approve submitted Purchase Orders
         </p>
       </div>
+
+      {approvedPdf && (
+        <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
+          <div>
+            <p className="text-[#348734] font-medium text-sm">
+              PO {approvedPdf.poNumber} approved successfully!
+            </p>
+            <p className="text-xs text-[#787878] mt-0.5">PDF has been generated.</p>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href={approvedPdf.url}
+              target="_blank"
+              className="px-4 py-2 bg-[#155387] text-white text-sm rounded-lg hover:bg-[#107ed9] transition-colors"
+            >
+              View PDF
+            </a>
+            <button
+              onClick={() => setApprovedPdf(null)}
+              className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {pos.length === 0 ? (
         <div className="text-center py-20">

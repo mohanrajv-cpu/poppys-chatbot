@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS email_log (
   sent_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Notifications (in-app, replaces email for demo)
+CREATE TABLE IF NOT EXISTS notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  role_target VARCHAR(50),
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  entity_type VARCHAR(50),
+  entity_id INTEGER,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_colours_hex_code ON colours(UPPER(hex_code));
 CREATE INDEX IF NOT EXISTS idx_colours_status ON colours(status);
@@ -123,6 +136,8 @@ CREATE INDEX IF NOT EXISTS idx_po_line_items_po_id ON po_line_items(po_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_role_target ON notifications(role_target);
 
 -- Seed the 29 base Poppys colours
 INSERT INTO colours (hex_code, name, status) VALUES

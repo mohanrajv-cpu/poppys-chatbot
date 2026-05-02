@@ -80,10 +80,30 @@ export async function POST(
       VALUES (${user.id}, ${action === 'approve' ? 'APPROVE_PO' : 'REJECT_PO'}, 'po', ${poId}, ${JSON.stringify({ reason: reason || null })})
     `;
 
-    // TODO: Send email notification to PO Creator
-    // TODO: If approved, generate final clean PDF
+    const po = result.rows[0];
 
-    return NextResponse.json({ po: result.rows[0] });
+    // On approval, generate PDF and store URL
+    if (action === 'approve') {
+      const pdfUrl = `/api/po/${poId}/pdf`;
+      await sql`UPDATE pos SET pdf_url = ${pdfUrl} WHERE id = ${poId}`;
+      po.pdf_url = pdfUrl;
+    }
+
+    // Notify the PO creator about the decision
+    await sql`
+      INSERT INTO notifications (user_id, title, message, entity_type, entity_id)
+      VALUES (
+        ${po.created_by},
+        ${action === 'approve' ? 'PO Approved' : 'PO Rejected'},
+        ${action === 'approve'
+          ? 'Your PO ' + po.po_number + ' has been approved. View PDF: /api/po/' + poId + '/pdf'
+          : 'Your PO ' + po.po_number + ' was rejected. Reason: ' + (reason || '')},
+        'po',
+        ${poId}
+      )
+    `;
+
+    return NextResponse.json({ po });
   } catch (error) {
     console.error('PO approval error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

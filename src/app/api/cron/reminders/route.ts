@@ -45,29 +45,34 @@ export async function GET(request: NextRequest) {
 
     // Send reminders for stale colours (to Colour Bank Manager)
     if (staleColours.rows.length > 0) {
-      const managers = await sql`SELECT * FROM users WHERE role = 'colour_manager'`;
-      for (const manager of managers.rows) {
-        // TODO: Actually send email via Resend
-        // For now, just log it
-        await sql`
-          INSERT INTO email_log (to_email, subject, template, related_entity_type, related_entity_id)
-          VALUES (${manager.email}, 'Reminder: Pending colours awaiting approval', 'reminder_pending_colour', 'colour', ${staleColours.rows[0].id})
-        `;
-        remindersSent++;
-      }
+      // Notify colour managers via dashboard
+      await sql`
+        INSERT INTO notifications (role_target, title, message, entity_type, entity_id)
+        VALUES (
+          'colour_manager',
+          'Pending Colours Reminder',
+          ${staleColours.rows.length + ' colour(s) have been waiting for approval for over 24 hours.'},
+          'colour',
+          ${staleColours.rows[0].id}
+        )
+      `;
+      remindersSent++;
     }
 
     // Send reminders for stale POs (to PO Approver)
     for (const po of stalePOs.rows) {
-      const approvers = await sql`SELECT * FROM users WHERE role = 'po_approver'`;
-      for (const approver of approvers.rows) {
-        // TODO: Actually send email via Resend
-        await sql`
-          INSERT INTO email_log (to_email, subject, template, related_entity_type, related_entity_id)
-          VALUES (${approver.email}, ${'Reminder: PO ' + po.po_number + ' awaiting approval'}, 'reminder_po_approval', 'po', ${po.id})
-        `;
-        remindersSent++;
-      }
+      // Notify PO approvers via dashboard
+      await sql`
+        INSERT INTO notifications (role_target, title, message, entity_type, entity_id)
+        VALUES (
+          'po_approver',
+          'PO Approval Reminder',
+          ${'PO ' + po.po_number + ' has been waiting for approval for over 24 hours.'},
+          'po',
+          ${po.id}
+        )
+      `;
+      remindersSent++;
     }
 
     return NextResponse.json({

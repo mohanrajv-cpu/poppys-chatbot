@@ -112,6 +112,18 @@ export interface SuggestionChip {
   action: string;
 }
 
+export interface Notification {
+  id: number;
+  user_id: number | null;
+  role_target: UserRole | null;
+  title: string;
+  message: string;
+  entity_type: string | null;
+  entity_id: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 export interface AuditLogEntry {
   id: number;
   user_id: number;

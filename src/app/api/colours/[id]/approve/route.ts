@@ -76,7 +76,17 @@ export async function POST(
           WHERE id = ${colour.source_po} AND status = 'PENDING_COLOUR_APPROVAL'
         `;
 
-        // TODO: Send email notification to PO Approver
+        // Notify PO approvers that the PO is ready
+        await sql`
+          INSERT INTO notifications (role_target, title, message, entity_type, entity_id)
+          VALUES (
+            'po_approver',
+            'PO Ready for Approval',
+            ${'All colours on PO #' + colour.source_po + ' are now approved. The PO is ready for your review.'},
+            'po',
+            ${colour.source_po}
+          )
+        `;
       }
     }
 
