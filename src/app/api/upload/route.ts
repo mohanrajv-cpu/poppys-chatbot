@@ -3,6 +3,8 @@ import { getSession } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 
+export const maxDuration = 60;
+
 
 // Text-based PDF extraction
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
@@ -20,6 +22,24 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
     fullText += pageText + '\n';
   }
 
+  return fullText;
+}
+
+// OCR for scanned PDFs — converts pages to images then runs Tesseract
+async function extractTextFromScannedPDF(buffer: ArrayBuffer): Promise<string> {
+  const { pdf } = await import('pdf-to-img');
+  const { createWorker } = await import('tesseract.js');
+
+  const worker = await createWorker('eng');
+  let fullText = '';
+
+  const doc = await pdf(Buffer.from(buffer), { scale: 2 });
+  for await (const pageImage of doc) {
+    const { data: { text } } = await worker.recognize(pageImage);
+    fullText += text + '\n';
+  }
+
+  await worker.terminate();
   return fullText;
 }
 
@@ -136,28 +156,50 @@ export async function POST(request: NextRequest) {
 
     // Extract text based on file type
     let extractedText = '';
+    let usedOCR = false;
 
-    try {
-      if (file.type === 'application/pdf') {
+    if (file.type === 'application/pdf') {
+      // Step 1: Try text extraction (fast, works for text-based PDFs)
+      try {
         extractedText = await extractTextFromPDF(buffer);
-      } else {
-        extractedText = await extractTextFromWord(buffer);
+      } catch (err) {
+        console.error('PDF text extraction failed:', err);
       }
-    } catch (err) {
-      console.error('File extraction error:', err);
-      return NextResponse.json({
-        reply: '⚠️ I could not read this file. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
-        chips: [
-          { label: '📄 Try another file', action: 'upload_po' },
-          { label: '📝 Create PO manually', action: 'create_po' },
-        ],
-      });
+
+      // Step 2: If empty, try OCR (slower, works for scanned PDFs)
+      if (!extractedText.trim()) {
+        try {
+          extractedText = await extractTextFromScannedPDF(buffer);
+          usedOCR = true;
+        } catch (err) {
+          console.error('OCR failed:', err);
+          return NextResponse.json({
+            reply: '⚠️ I could not read this PDF. Both text extraction and OCR failed. You can:\n\n1. Try uploading a clearer version\n2. Use the manual PO creation form instead',
+            chips: [
+              { label: '📝 Create PO manually', action: 'create_po' },
+              { label: '📄 Try another file', action: 'upload_po' },
+            ],
+          });
+        }
+      }
+    } else {
+      try {
+        extractedText = await extractTextFromWord(buffer);
+      } catch (err) {
+        console.error('Word extraction failed:', err);
+        return NextResponse.json({
+          reply: '⚠️ I could not read this Word document. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
+          chips: [
+            { label: '📄 Try another file', action: 'upload_po' },
+            { label: '📝 Create PO manually', action: 'create_po' },
+          ],
+        });
+      }
     }
 
-    // If no text found, likely a scanned/image PDF
     if (!extractedText.trim()) {
       return NextResponse.json({
-        reply: '⚠️ This appears to be a **scanned/image PDF** — I cannot extract text from it directly.\n\nPlease use one of these options:\n\n1. Upload a **text-based PDF** (generated from software, not scanned)\n2. Use the **manual PO creation** form to enter the details step by step',
+        reply: '⚠️ I could not find any readable text in this file. You can:\n\n1. Try a different file\n2. Use the manual PO creation form',
         chips: [
           { label: '📝 Create PO manually', action: 'create_po' },
           { label: '📄 Try another file', action: 'upload_po' },
@@ -185,7 +227,7 @@ export async function POST(request: NextRequest) {
     const mismatches = validationResults.filter((r) => r.verdict === 'NAME_MISMATCH').length;
     const unknown = validationResults.filter((r) => r.verdict === 'UNKNOWN_CODE').length;
 
-    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}".\n\n`;
+    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}"${usedOCR ? ' (scanned via OCR)' : ''}.\n\n`;
     reply += `**Validation Results:**\n`;
     reply += `• ✅ Valid: ${valid}\n`;
     if (mismatches > 0) reply += `• ⚠️ Name mismatches: ${mismatches}\n`;
