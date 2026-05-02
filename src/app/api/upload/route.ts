@@ -3,8 +3,6 @@ import { getSession } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 
-// Allow up to 60 seconds for OCR processing
-export const maxDuration = 60;
 
 // Text-based PDF extraction
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
@@ -25,24 +23,6 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   return fullText;
 }
 
-// OCR for scanned PDFs — converts pages to images then runs Tesseract
-async function extractTextFromScannedPDF(buffer: ArrayBuffer): Promise<string> {
-  const { pdf } = await import('pdf-to-img');
-  const { createWorker } = await import('tesseract.js');
-
-  const worker = await createWorker('eng');
-  let fullText = '';
-
-  const doc = await pdf(Buffer.from(buffer), { scale: 2 });
-  for await (const pageImage of doc) {
-    const { data: { text } } = await worker.recognize(pageImage);
-    fullText += text + '\n';
-  }
-
-  await worker.terminate();
-  return fullText;
-}
-
 // Extract text from Word document
 async function extractTextFromWord(buffer: ArrayBuffer): Promise<string> {
   const mammoth = await import('mammoth');
@@ -50,17 +30,18 @@ async function extractTextFromWord(buffer: ArrayBuffer): Promise<string> {
   return result.value;
 }
 
-// Check if a 6-char hex string is likely a colour code (not a quantity, pincode, etc.)
+// Check if a 6-char hex string is likely a colour code based on its surrounding context
 function isLikelyColourCode(hex: string, surroundingText: string): boolean {
-  // Pure numeric 6-digit strings are usually quantities, pincodes, dates — not colours
-  if (/^\d{6}$/.test(hex)) return false;
-
-  // Must contain at least one letter (A-F) to be a plausible hex colour
-  if (!/[a-fA-F]/.test(hex)) return false;
-
-  // Skip if it appears near known non-colour context (GST numbers, phone numbers, etc.)
   const lower = surroundingText.toLowerCase();
-  if (lower.includes('gst') || lower.includes('phone') || lower.includes('tirupur') || lower.includes('tamil nadu')) return false;
+
+  // Skip hex codes found in address/header lines (pincodes, GST, phone etc.)
+  if (lower.includes('tirupur') || lower.includes('tamil nadu') || lower.includes('gst no')) return false;
+
+  // Skip if it appears as a decimal quantity (e.g., "220450.000")
+  if (surroundingText.includes(hex + '.')) return false;
+
+  // Skip if preceded by TOTAL (it's a sum)
+  if (lower.includes('total') && /^\d{6}$/.test(hex)) return false;
 
   return true;
 }
@@ -155,45 +136,33 @@ export async function POST(request: NextRequest) {
 
     // Extract text based on file type
     let extractedText = '';
-    let usedOCR = false;
 
-    if (file.type === 'application/pdf') {
-      // Step 1: Try text extraction
-      try {
+    try {
+      if (file.type === 'application/pdf') {
         extractedText = await extractTextFromPDF(buffer);
-      } catch (err) {
-        console.error('PDF text extraction failed:', err);
-      }
-
-      // Step 2: If no text found, fall back to OCR (scanned PDF)
-      if (!extractedText.trim()) {
-        try {
-          extractedText = await extractTextFromScannedPDF(buffer);
-          usedOCR = true;
-        } catch (err) {
-          console.error('OCR extraction failed:', err);
-          return NextResponse.json({
-            reply: '⚠️ I could not read this file. PDF text extraction and OCR both failed. You can:\n\n1. Try uploading a text-based PDF (not a scanned image)\n2. Use the manual PO creation form instead',
-            chips: [
-              { label: '📄 Try another file', action: 'upload_po' },
-              { label: '📝 Create PO manually', action: 'create_po' },
-            ],
-          });
-        }
-      }
-    } else {
-      try {
+      } else {
         extractedText = await extractTextFromWord(buffer);
-      } catch (err) {
-        console.error('Word extraction failed:', err);
-        return NextResponse.json({
-          reply: '⚠️ I could not read this Word document. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
-          chips: [
-            { label: '📄 Try another file', action: 'upload_po' },
-            { label: '📝 Create PO manually', action: 'create_po' },
-          ],
-        });
       }
+    } catch (err) {
+      console.error('File extraction error:', err);
+      return NextResponse.json({
+        reply: '⚠️ I could not read this file. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
+        chips: [
+          { label: '📄 Try another file', action: 'upload_po' },
+          { label: '📝 Create PO manually', action: 'create_po' },
+        ],
+      });
+    }
+
+    // If no text found, likely a scanned/image PDF
+    if (!extractedText.trim()) {
+      return NextResponse.json({
+        reply: '⚠️ This appears to be a **scanned/image PDF** — I cannot extract text from it directly.\n\nPlease use one of these options:\n\n1. Upload a **text-based PDF** (generated from software, not scanned)\n2. Use the **manual PO creation** form to enter the details step by step',
+        chips: [
+          { label: '📝 Create PO manually', action: 'create_po' },
+          { label: '📄 Try another file', action: 'upload_po' },
+        ],
+      });
     }
 
     // Parse colour lines from extracted text
@@ -216,7 +185,7 @@ export async function POST(request: NextRequest) {
     const mismatches = validationResults.filter((r) => r.verdict === 'NAME_MISMATCH').length;
     const unknown = validationResults.filter((r) => r.verdict === 'UNKNOWN_CODE').length;
 
-    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}"${usedOCR ? ' (scanned via OCR)' : ''}.\n\n`;
+    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}".\n\n`;
     reply += `**Validation Results:**\n`;
     reply += `• ✅ Valid: ${valid}\n`;
     if (mismatches > 0) reply += `• ⚠️ Name mismatches: ${mismatches}\n`;
