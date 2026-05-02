@@ -3,6 +3,9 @@ import { getSession } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 
+// Allow up to 60 seconds for OCR processing
+export const maxDuration = 60;
+
 // Text-based PDF extraction
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -151,30 +154,46 @@ export async function POST(request: NextRequest) {
     const buffer = await file.arrayBuffer();
 
     // Extract text based on file type
-    let extractedText: string;
+    let extractedText = '';
     let usedOCR = false;
-    try {
-      if (file.type === 'application/pdf') {
-        // Try text extraction first
-        extractedText = await extractTextFromPDF(buffer);
 
-        // If no text found, fall back to OCR (scanned PDF)
-        if (!extractedText.trim()) {
+    if (file.type === 'application/pdf') {
+      // Step 1: Try text extraction
+      try {
+        extractedText = await extractTextFromPDF(buffer);
+      } catch (err) {
+        console.error('PDF text extraction failed:', err);
+      }
+
+      // Step 2: If no text found, fall back to OCR (scanned PDF)
+      if (!extractedText.trim()) {
+        try {
           extractedText = await extractTextFromScannedPDF(buffer);
           usedOCR = true;
+        } catch (err) {
+          console.error('OCR extraction failed:', err);
+          return NextResponse.json({
+            reply: '⚠️ I could not read this file. PDF text extraction and OCR both failed. You can:\n\n1. Try uploading a text-based PDF (not a scanned image)\n2. Use the manual PO creation form instead',
+            chips: [
+              { label: '📄 Try another file', action: 'upload_po' },
+              { label: '📝 Create PO manually', action: 'create_po' },
+            ],
+          });
         }
-      } else {
-        extractedText = await extractTextFromWord(buffer);
       }
-    } catch (err) {
-      console.error('File extraction error:', err);
-      return NextResponse.json({
-        reply: '⚠️ I could not read this file. It might be in an unsupported format. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
-        chips: [
-          { label: '📄 Try another file', action: 'upload_po' },
-          { label: '📝 Create PO manually', action: 'create_po' },
-        ],
-      });
+    } else {
+      try {
+        extractedText = await extractTextFromWord(buffer);
+      } catch (err) {
+        console.error('Word extraction failed:', err);
+        return NextResponse.json({
+          reply: '⚠️ I could not read this Word document. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
+          chips: [
+            { label: '📄 Try another file', action: 'upload_po' },
+            { label: '📝 Create PO manually', action: 'create_po' },
+          ],
+        });
+      }
     }
 
     // Parse colour lines from extracted text
