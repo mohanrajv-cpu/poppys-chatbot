@@ -50,8 +50,13 @@ function isLikelyColourCode(hex: string, surroundingText: string): boolean {
   // Skip if it appears as a decimal quantity (e.g., "220450.000")
   if (surroundingText.includes(hex + '.')) return false;
 
-  // Skip if preceded by TOTAL (it's a sum)
-  if (lower.includes('total') && /^\d{6}$/.test(hex)) return false;
+  // Skip pure-digit hex codes that appear AFTER a UOM keyword (they're quantities, not colours)
+  if (/^\d{6}$/.test(hex)) {
+    const uomMatch = surroundingText.match(/\b(NOS|KGS|MTRS|PCS)\b/i);
+    const hexPos = surroundingText.indexOf(hex);
+    if (uomMatch && uomMatch.index !== undefined && hexPos > uomMatch.index) return false;
+    if (/\bTOTAL\b/i.test(surroundingText)) return false;
+  }
 
   return true;
 }
