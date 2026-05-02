@@ -175,7 +175,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buffer = await file.arrayBuffer();
+    // Copy the buffer so it doesn't get detached between text extraction and OCR
+    const originalBuffer = await file.arrayBuffer();
+    const buffer = originalBuffer.slice(0);
 
     // Extract text based on file type
     let extractedText = '';
@@ -195,7 +197,7 @@ export async function POST(request: NextRequest) {
       // Step 2: If empty, try OCR (slower, works for scanned PDFs)
       if (!extractedText.trim()) {
         try {
-          extractedText = await extractTextFromScannedPDF(buffer);
+          extractedText = await extractTextFromScannedPDF(buffer.slice(0));
           usedOCR = true;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
