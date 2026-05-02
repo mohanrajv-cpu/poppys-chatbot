@@ -175,9 +175,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Copy the buffer so it doesn't get detached between text extraction and OCR
-    const originalBuffer = await file.arrayBuffer();
-    const buffer = originalBuffer.slice(0);
+    // Store as Uint8Array immediately — ArrayBuffer can get detached in serverless
+    const rawBuffer = await file.arrayBuffer();
+    const fileBytes = new Uint8Array(rawBuffer);
 
     // Extract text based on file type
     let extractedText = '';
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
       // Step 1: Try text extraction (fast, works for text-based PDFs)
       let textError = '';
       try {
-        extractedText = await extractTextFromPDF(buffer);
+        extractedText = await extractTextFromPDF(fileBytes.buffer.slice(0));
         console.log('Text extraction result length:', extractedText.trim().length);
       } catch (err) {
         textError = err instanceof Error ? err.message : String(err);
@@ -197,7 +197,7 @@ export async function POST(request: NextRequest) {
       // Step 2: If empty, try OCR (slower, works for scanned PDFs)
       if (!extractedText.trim()) {
         try {
-          extractedText = await extractTextFromScannedPDF(buffer.slice(0));
+          extractedText = await extractTextFromScannedPDF(fileBytes.buffer.slice(0));
           usedOCR = true;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
       }
     } else {
       try {
-        extractedText = await extractTextFromWord(buffer);
+        extractedText = await extractTextFromWord(fileBytes.buffer.slice(0));
       } catch (err) {
         console.error('Word extraction failed:', err);
         return NextResponse.json({
