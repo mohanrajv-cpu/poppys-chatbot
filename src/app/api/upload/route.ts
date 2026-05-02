@@ -3,7 +3,7 @@ import { getSession } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 
-// Simple PDF text extraction (server-side)
+// Text-based PDF extraction
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
@@ -22,6 +22,24 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   return fullText;
 }
 
+// OCR for scanned PDFs — converts pages to images then runs Tesseract
+async function extractTextFromScannedPDF(buffer: ArrayBuffer): Promise<string> {
+  const { pdf } = await import('pdf-to-img');
+  const { createWorker } = await import('tesseract.js');
+
+  const worker = await createWorker('eng');
+  let fullText = '';
+
+  const doc = await pdf(Buffer.from(buffer), { scale: 2 });
+  for await (const pageImage of doc) {
+    const { data: { text } } = await worker.recognize(pageImage);
+    fullText += text + '\n';
+  }
+
+  await worker.terminate();
+  return fullText;
+}
+
 // Extract text from Word document
 async function extractTextFromWord(buffer: ArrayBuffer): Promise<string> {
   const mammoth = await import('mammoth');
@@ -29,16 +47,29 @@ async function extractTextFromWord(buffer: ArrayBuffer): Promise<string> {
   return result.value;
 }
 
+// Check if a 6-char hex string is likely a colour code (not a quantity, pincode, etc.)
+function isLikelyColourCode(hex: string, surroundingText: string): boolean {
+  // Pure numeric 6-digit strings are usually quantities, pincodes, dates — not colours
+  if (/^\d{6}$/.test(hex)) return false;
+
+  // Must contain at least one letter (A-F) to be a plausible hex colour
+  if (!/[a-fA-F]/.test(hex)) return false;
+
+  // Skip if it appears near known non-colour context (GST numbers, phone numbers, etc.)
+  const lower = surroundingText.toLowerCase();
+  if (lower.includes('gst') || lower.includes('phone') || lower.includes('tirupur') || lower.includes('tamil nadu')) return false;
+
+  return true;
+}
+
 // Parse extracted text to find colour codes and names
 function parseColourLines(text: string): { sno: number; colour_code: string; colour_name: string }[] {
   const lines: { sno: number; colour_code: string; colour_name: string }[] = [];
 
-  // Pattern 1: Look for 6-char hex codes in text
   const hexPattern = /\b([0-9A-Fa-f]{6})\b/g;
   let match;
   let sno = 1;
 
-  // Split text into rows/lines and find hex codes with their associated colour names
   const textLines = text.split(/\n|\r/);
 
   for (const line of textLines) {
@@ -46,18 +77,23 @@ function parseColourLines(text: string): { sno: number; colour_code: string; col
     while ((match = hexPattern.exec(line)) !== null) {
       const hexCode = match[1];
 
+      // Filter out false positives
+      if (!isLikelyColourCode(hexCode, line)) continue;
+
       // Try to find a colour name near the hex code
-      // Look for patterns like: HEXCODE ... COLOURNAME or COLOURNAME ... HEXCODE
       const namePattern = /\b([A-Z][A-Z_]+(?:_\d+)?)\b/g;
       let nameMatch;
       let colourName = '';
 
       while ((nameMatch = namePattern.exec(line)) !== null) {
         const potential = nameMatch[1];
-        // Skip if it looks like just another hex code or common PO terms
         if (
           /^[0-9A-F]{6}$/.test(potential) ||
-          ['NOS', 'KGS', 'MTRS', 'PCS', 'UOM', 'QTY', 'GST', 'INR', 'USD', 'EUR'].includes(potential)
+          ['NOS', 'KGS', 'MTRS', 'PCS', 'UOM', 'QTY', 'GST', 'INR', 'USD', 'EUR',
+           'ACC', 'STYLE', 'DESCRIPTION', 'SHADENO', 'COLOR', 'SIZES', 'TOTAL',
+           'GROSS', 'PURCHASE', 'BUTTON', 'ZIP', 'TAPE', 'LACE', 'PRONGS',
+           'CAPPED', 'VENDOR', 'EMAIL', 'DELIVERY', 'TERMS', 'PLACE',
+           'POPPYS', 'KNITWEAR', 'PRIVATE', 'LIMITED', 'ACCESSORIES'].includes(potential)
         ) {
           continue;
         }
@@ -67,7 +103,7 @@ function parseColourLines(text: string): { sno: number; colour_code: string; col
 
       lines.push({
         sno: sno++,
-        colour_code: hexCode,
+        colour_code: hexCode.toUpperCase(),
         colour_name: colourName || 'UNKNOWN',
       });
     }
@@ -116,15 +152,24 @@ export async function POST(request: NextRequest) {
 
     // Extract text based on file type
     let extractedText: string;
+    let usedOCR = false;
     try {
       if (file.type === 'application/pdf') {
+        // Try text extraction first
         extractedText = await extractTextFromPDF(buffer);
+
+        // If no text found, fall back to OCR (scanned PDF)
+        if (!extractedText.trim()) {
+          extractedText = await extractTextFromScannedPDF(buffer);
+          usedOCR = true;
+        }
       } else {
         extractedText = await extractTextFromWord(buffer);
       }
     } catch (err) {
+      console.error('File extraction error:', err);
       return NextResponse.json({
-        reply: '⚠��� I could not read this file. It might be a scanned document or in an unsupported format. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
+        reply: '⚠️ I could not read this file. It might be in an unsupported format. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
         chips: [
           { label: '📄 Try another file', action: 'upload_po' },
           { label: '📝 Create PO manually', action: 'create_po' },
@@ -152,7 +197,7 @@ export async function POST(request: NextRequest) {
     const mismatches = validationResults.filter((r) => r.verdict === 'NAME_MISMATCH').length;
     const unknown = validationResults.filter((r) => r.verdict === 'UNKNOWN_CODE').length;
 
-    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}".\n\n`;
+    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}"${usedOCR ? ' (scanned via OCR)' : ''}.\n\n`;
     reply += `**Validation Results:**\n`;
     reply += `• ✅ Valid: ${valid}\n`;
     if (mismatches > 0) reply += `• ⚠️ Name mismatches: ${mismatches}\n`;
