@@ -5,9 +5,21 @@ import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 
 // Simple PDF text extraction (server-side)
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
-  const pdfParse = (await import('pdf-parse')).default;
-  const result = await pdfParse(Buffer.from(buffer));
-  return result.text;
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+  let fullText = '';
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item: unknown) => (item as { str?: string }).str || '')
+      .join(' ');
+    fullText += pageText + '\n';
+  }
+
+  return fullText;
 }
 
 // Extract text from Word document

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx next:*)",
+      "Bash(npx vercel:*)",
+      "Bash(node -e \"const p = require\\(''pdfjs-dist/package.json''\\); console.log\\(p.version\\)\")",
+      "Bash(npm install:*)",
+      "Bash(npm ls:*)",
+      "Bash(node -e \":*)",
+      "Bash(npm uninstall:*)",
+      "Bash(node --experimental-vm-modules -e \":*)"
+    ]
+  }
+}
