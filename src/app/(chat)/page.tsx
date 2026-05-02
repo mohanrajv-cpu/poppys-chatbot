@@ -377,13 +377,37 @@ export default function ChatPage() {
 
       setLastValidationLines(data.results || []);
 
+      // Build actionable guidance based on validation results
+      const mismatches = (data.results || []).filter((r: { verdict: string }) => r.verdict === 'NAME_MISMATCH');
+      const unknowns = (data.results || []).filter((r: { verdict: string }) => r.verdict === 'UNKNOWN_CODE');
+
+      if (mismatches.length > 0) {
+        summary += `\n**Name Mismatches — fix required:**\n`;
+        mismatches.forEach((m: { sno: number; colour_code: string; entered_name: string; official_name: string }) => {
+          summary += `• Line ${m.sno}: **${m.colour_code}** — you entered "${m.entered_name}", official name is **${m.official_name}**\n`;
+        });
+        summary += `\nClick "Fix all mismatches" to use official names, or go back to edit line items.`;
+      }
+
+      if (unknowns.length > 0) {
+        summary += `\n**Unknown Colour Codes:**\n`;
+        unknowns.forEach((u: { sno: number; colour_code: string; entered_name: string }) => {
+          summary += `• Line ${u.sno}: **${u.colour_code}** (${u.entered_name}) — not in Colour Bank\n`;
+        });
+        summary += `\nClick "Add unknown colours" to register them as PENDING, or go back to correct the codes.`;
+      }
+
       const reviewChips: SuggestionChip[] = [];
-      if (data.summary?.unknown > 0) {
+      if (mismatches.length > 0) {
+        reviewChips.push({ label: 'Fix all mismatches to official names', action: '__fix_mismatches__' });
+      }
+      if (unknowns.length > 0) {
         reviewChips.push({ label: 'Add unknown colours to Bank', action: 'add_unknown_colours' });
       }
-      if (!data.summary?.hasErrors) {
+      if (!data.summary?.hasErrors && mismatches.length === 0 && unknowns.length === 0) {
         reviewChips.push({ label: 'Submit PO', action: 'po_create_submit' });
       }
+      reviewChips.push({ label: 'Go back to edit lines', action: '__back_to_lines__' });
       reviewChips.push({ label: 'Cancel', action: 'po_create_cancel' });
 
       const botMsg: Message = {
@@ -402,6 +426,34 @@ export default function ChatPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleFixMismatches() {
+    addUserMessage('Fix all mismatches to official names');
+
+    // Update line items with official names from validation
+    setPoDraft((d) => {
+      const updated = d.line_items.map((item, i) => {
+        const vLine = lastValidationLines[i];
+        if (vLine && vLine.verdict === 'NAME_MISMATCH' && vLine.official_name) {
+          return { ...item, colour_name: vLine.official_name };
+        }
+        return item;
+      });
+      return { ...d, line_items: updated };
+    });
+
+    const fixed = lastValidationLines.filter(l => l.verdict === 'NAME_MISMATCH');
+    let msg = `Fixed ${fixed.length} colour name${fixed.length > 1 ? 's' : ''} to official names:\n\n`;
+    fixed.forEach(f => {
+      msg += `• ${f.colour_code}: "${f.entered_name}" → **${f.official_name}**\n`;
+    });
+    msg += `\nRe-validating...`;
+
+    addBotMessage(msg);
+
+    // Re-run validation with corrected names
+    setTimeout(() => handlePOReview(), 500);
   }
 
   async function handlePOCreateSubmit() {
@@ -651,9 +703,13 @@ export default function ChatPage() {
     }
   }
 
-  function handleChipSelect(action: string) {
+  async function handleChipSelect(action: string) {
     if (action === 'add_unknown_colours') {
-      handleAddUnknownColours();
+      await handleAddUnknownColours();
+      // If in PO creation, re-validate after adding colours
+      if (poStep === 'review') {
+        setTimeout(() => handlePOReview(), 500);
+      }
       return;
     }
     if (action === 'submit_po') {
@@ -662,6 +718,23 @@ export default function ChatPage() {
     }
     if (action === 'po_create_submit') {
       handlePOCreateSubmit();
+      return;
+    }
+    if (action === '__fix_mismatches__') {
+      handleFixMismatches();
+      return;
+    }
+    if (action === '__back_to_lines__') {
+      addUserMessage('Go back to edit lines');
+      setPoStep('line_item');
+      addBotMessage(
+        `You have ${poDraft.line_items.length} line item${poDraft.line_items.length > 1 ? 's' : ''}. You can:\n\n• **Undo** the last item and re-enter it\n• Add more items\n• Type **done** when ready to review again`,
+        [
+          { label: 'Undo last item', action: '__undo_item__' },
+          { label: 'Done — review PO', action: 'done' },
+        ]
+      );
+      setPoStep('more_items');
       return;
     }
     if (action === 'po_create_cancel') {
