@@ -2,13 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { sql } from '@/lib/db';
 import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
+import path from 'path';
+import { pathToFileURL } from 'url';
 
 export const maxDuration = 60;
+
+// Resolve pdfjs worker path for both local and Vercel environments
+function getPdfjsWorkerSrc(): string {
+  const workerPath = path.join(process.cwd(), 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
+  return pathToFileURL(workerPath).href;
+}
 
 
 // Text-based PDF extraction
 async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = getPdfjsWorkerSrc();
 
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
   let fullText = '';
@@ -28,6 +37,7 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
 // OCR for scanned PDFs — renders pages via pdfjs + @napi-rs/canvas, then runs Tesseract
 async function extractTextFromScannedPDF(buffer: ArrayBuffer): Promise<string> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = getPdfjsWorkerSrc();
   const { createCanvas } = await import('@napi-rs/canvas');
   const { createWorker } = await import('tesseract.js');
 
