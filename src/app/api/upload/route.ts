@@ -5,7 +5,6 @@ import { validateMultipleLines, normalizeHexCode } from '@/lib/validation';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-export const maxDuration = 60;
 
 // Resolve pdfjs worker path for both local and Vercel environments
 function getPdfjsWorkerSrc(): string {
@@ -31,38 +30,6 @@ async function extractTextFromPDF(buffer: ArrayBuffer): Promise<string> {
     fullText += pageText + '\n';
   }
 
-  return fullText;
-}
-
-// OCR for scanned PDFs — renders pages via pdfjs + @napi-rs/canvas, then runs Tesseract
-async function extractTextFromScannedPDF(buffer: ArrayBuffer): Promise<string> {
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  pdfjsLib.GlobalWorkerOptions.workerSrc = getPdfjsWorkerSrc();
-  const { createCanvas } = await import('@napi-rs/canvas');
-  const { createWorker } = await import('tesseract.js');
-
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-  const worker = await createWorker('eng');
-  let fullText = '';
-
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: 2 });
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext('2d');
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (page.render as any)({
-      canvasContext: context,
-      viewport,
-    }).promise;
-
-    const pngBuffer = canvas.toBuffer('image/png');
-    const { data: { text } } = await worker.recognize(pngBuffer);
-    fullText += text + '\n';
-  }
-
-  await worker.terminate();
   return fullText;
 }
 
@@ -181,58 +148,30 @@ export async function POST(request: NextRequest) {
 
     // Extract text based on file type
     let extractedText = '';
-    let usedOCR = false;
 
-    if (file.type === 'application/pdf') {
-      // Step 1: Try text extraction (fast, works for text-based PDFs)
-      let textError = '';
-      try {
+    try {
+      if (file.type === 'application/pdf') {
         extractedText = await extractTextFromPDF(fileBytes.buffer.slice(0));
-        console.log('Text extraction result length:', extractedText.trim().length);
-      } catch (err) {
-        textError = err instanceof Error ? err.message : String(err);
-        console.error('PDF text extraction failed:', textError);
-      }
-
-      // Step 2: If empty, try OCR (slower, works for scanned PDFs)
-      if (!extractedText.trim()) {
-        try {
-          extractedText = await extractTextFromScannedPDF(fileBytes.buffer.slice(0));
-          usedOCR = true;
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          const errStack = err instanceof Error ? err.stack?.slice(0, 500) : '';
-          console.error('OCR failed:', errMsg, errStack);
-          return NextResponse.json({
-            reply: `⚠️ I could not read this PDF.\n\n**Text extraction:** ${textError || 'No text found (scanned PDF)'}\n**OCR error:** ${errMsg}\n\nYou can:\n1. Try uploading a text-based PDF\n2. Use the manual PO creation form instead`,
-            chips: [
-              { label: '📝 Create PO manually', action: 'create_po' },
-              { label: '📄 Try another file', action: 'upload_po' },
-            ],
-          });
-        }
-      }
-    } else {
-      try {
+      } else {
         extractedText = await extractTextFromWord(fileBytes.buffer.slice(0));
-      } catch (err) {
-        console.error('Word extraction failed:', err);
-        return NextResponse.json({
-          reply: '⚠️ I could not read this Word document. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
-          chips: [
-            { label: '📄 Try another file', action: 'upload_po' },
-            { label: '📝 Create PO manually', action: 'create_po' },
-          ],
-        });
       }
+    } catch (err) {
+      console.error('File extraction error:', err);
+      return NextResponse.json({
+        reply: '⚠️ I could not read this file. You can:\n\n1. Try uploading a different version\n2. Use the manual PO creation form instead',
+        chips: [
+          { label: '📝 Create PO manually', action: 'create_po' },
+          { label: '📄 Try another file', action: 'upload_po' },
+        ],
+      });
     }
 
     if (!extractedText.trim()) {
       return NextResponse.json({
-        reply: '⚠️ I could not find any readable text in this file. You can:\n\n1. Try a different file\n2. Use the manual PO creation form',
+        reply: '⚠️ This appears to be a **scanned/image PDF**. Text-based PDFs work instantly.\n\nFor scanned PDFs, please use the **manual PO creation** — I\'ll guide you step by step, same result.',
         chips: [
           { label: '📝 Create PO manually', action: 'create_po' },
-          { label: '📄 Try another file', action: 'upload_po' },
+          { label: '📄 Try a different file', action: 'upload_po' },
         ],
       });
     }
@@ -257,7 +196,7 @@ export async function POST(request: NextRequest) {
     const mismatches = validationResults.filter((r) => r.verdict === 'NAME_MISMATCH').length;
     const unknown = validationResults.filter((r) => r.verdict === 'UNKNOWN_CODE').length;
 
-    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}"${usedOCR ? ' (scanned via OCR)' : ''}.\n\n`;
+    let reply = `📄 I found **${colourLines.length} colour entries** in "${file.name}".\n\n`;
     reply += `**Validation Results:**\n`;
     reply += `• ✅ Valid: ${valid}\n`;
     if (mismatches > 0) reply += `• ⚠️ Name mismatches: ${mismatches}\n`;
